@@ -1,0 +1,89 @@
+/* ODC client-sign overlay styles — shared by contract/ and onboarding/ */
+
+/* ── Banner (both modes) ─────────────────────────────────────────────── */
+.odcs-banner {
+  background: #f4f9ef; border-bottom: 1px solid #cfe0c4; color: #2f4a2a;
+  padding: 10px 20px; font-size: .88rem; line-height: 1.45;
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+}
+.odcs-banner strong { color: #3a6330; }
+.odcs-banner.client { background: #eaf3ff; border-color: #b7d0ec; color: #1a4a7a; }
+.odcs-banner.client strong { color: #0b4a8a; }
+.odcs-banner .odcs-steps { display: flex; gap: 10px; flex-wrap: wrap; margin-left: auto; }
+.odcs-banner .odcs-steps span { background: #fff; border: 1px solid #b7d0ec; border-radius: 20px; padding: 3px 10px; font-size: .78rem; white-space: nowrap; }
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+.odcs-btn {
+  background: #4a7c3f; color: #fff; border: none; padding: 9px 18px; border-radius: 7px;
+  font: inherit; font-size: .9rem; font-weight: 700; cursor: pointer; white-space: nowrap;
+  box-shadow: 0 3px 10px rgba(58,99,48,.25); transition: background .15s;
+}
+.odcs-btn:hover { background: #3a6330; }
+.odcs-btn.blue { background: #0b4a8a; box-shadow: 0 3px 10px rgba(11,74,138,.25); }
+.odcs-btn.blue:hover { background: #083a6d; }
+.odcs-btn.ghost { background: #fff; color: #3a6330; border: 1.5px solid #4a7c3f; box-shadow: none; }
+.odcs-btn.ghost:hover { background: #f4f9ef; }
+.odcs-btn:disabled { opacity: .55; cursor: wait; }
+.odcs-btn.big { font-size: 1rem; padding: 12px 24px; }
+
+/* Floating action (coordinator: create link / client: submit) */
+#odcsFloat { position: fixed; bottom: 22px; right: 22px; z-index: 9990; display: flex; gap: 8px; align-items: center; }
+@media print { #odcsFloat, .odcs-banner, #odcsModalBackdrop { display: none !important; } }
+
+/* ── Modal ───────────────────────────────────────────────────────────── */
+#odcsModalBackdrop {
+  display: none; position: fixed; inset: 0; z-index: 99990; background: rgba(20,30,20,.55);
+  align-items: center; justify-content: center; padding: 18px;
+}
+#odcsModalBackdrop.show { display: flex; }
+.odcs-modal {
+  background: #fff; border-radius: 12px; max-width: 600px; width: 100%; padding: 22px 24px;
+  box-shadow: 0 18px 50px rgba(0,0,0,.28); font-family: 'Segoe UI', Arial, sans-serif; color: #243024;
+  max-height: 92vh; overflow-y: auto;
+}
+.odcs-modal h3 { margin: 0 0 4px; font-size: 1.15rem; color: #3a6330; }
+.odcs-modal p.sub { margin: 0 0 14px; font-size: .85rem; color: #666; }
+.odcs-modal label { display: block; font-size: .8rem; font-weight: 700; color: #3a4a34; margin: 10px 0 4px; }
+.odcs-modal input[type=text], .odcs-modal input[type=email], .odcs-modal input[type=password], .odcs-modal textarea {
+  width: 100%; box-sizing: border-box; border: 1px solid #c8d6bd; border-radius: 6px; padding: 8px 10px; font: inherit; font-size: .9rem;
+}
+.odcs-modal textarea { font-family: monospace; font-size: .78rem; min-height: 64px; resize: vertical; word-break: break-all; }
+.odcs-modal .row { display: flex; gap: 10px; flex-wrap: wrap; }
+.odcs-modal .row > div { flex: 1; min-width: 200px; }
+.odcs-modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; padding-top: 12px; border-top: 1px solid #eee; flex-wrap: wrap; }
+.odcs-modal .msg { margin-top: 10px; padding: 9px 12px; border-radius: 6px; font-size: .84rem; display: none; }
+.odcs-modal .msg.err { display: block; background: #fef3ef; border: 1px solid #d99656; color: #7a4a1a; }
+.odcs-modal .msg.ok { display: block; background: #eef9ea; border: 1px solid #4a7a3c; color: #2f4a2a; }
+.odcs-modal .msg.info { display: block; background: #eaf3ff; border: 1px solid #6b9bd1; color: #1a4a7a; }
+.odcs-modal .link-box { background: #f8fbf5; border: 1px solid #cfe0c4; border-radius: 8px; padding: 12px; margin-top: 8px; }
+
+/* ── Client mode: lock the documents, hide coordinator-only controls ─── */
+.odc-sign-client #tab1, .odc-sign-client #panel1,
+.odc-sign-client #lovToggleWrap,
+.odc-sign-client #formPicker,
+.odc-sign-client #navBar > div:last-child,
+.odc-sign-client .odcs-coord-only { display: none !important; }
+
+/* documents: read-only (signature slots and date fields stay interactive) */
+.odc-sign-client #docsContainer input:not([type=date]),
+.odc-sign-client #docsContainer select,
+.odc-sign-client #docsContainer textarea,
+.odc-sign-client #formContainer input:not([type=date]),
+.odc-sign-client #formContainer select,
+.odc-sign-client #formContainer textarea {
+  pointer-events: none; background-color: #fafaf7 !important;
+}
+.odc-sign-client #docsContainer .ff-inline { border-color: transparent; }
+/* staff slots cannot be touched by the participant */
+.odc-sign-client .sig-slot[data-sigtype="staff"] { pointer-events: none; opacity: .85; }
+.odc-sign-client [data-sigid="sig_1"], .odc-sign-client [data-sigid="sig_2"], .odc-sign-client [data-sigid="sig_10"] { pointer-events: none; }
+.odc-sign-client [data-sigid="sig_1"] .sig-clear-x, .odc-sign-client [data-sigid="sig_2"] .sig-clear-x, .odc-sign-client [data-sigid="sig_10"] .sig-clear-x { display: none !important; }
+.odc-sign-client .sig-slot[data-sigtype="staff"] .sig-slot-hint::after { content: ' (ODC staff)'; font-size: .7em; }
+
+/* ── Done screen ─────────────────────────────────────────────────────── */
+#odcsDone { position: fixed; inset: 0; z-index: 99995; background: linear-gradient(135deg,#eaf2e6 0%,#f0f4ee 100%); display: flex; align-items: flex-start; justify-content: center; padding: 30px 18px; overflow-y: auto; font-family: 'Segoe UI', Arial, sans-serif; }
+#odcsDone .card { background: #fff; border: 1px solid #c8dfc2; border-radius: 14px; padding: 30px 34px; max-width: 640px; width: 100%; box-shadow: 0 12px 40px rgba(0,0,0,.08); color: #243024; }
+#odcsDone h2 { margin: 0 0 8px; color: #3a6330; font-size: 1.4rem; }
+#odcsDone p { font-size: .95rem; line-height: 1.55; }
+#odcsDone .files a { display: block; margin: 4px 0; color: #0b4a8a; }
+#odcsDone .tick { font-size: 2.6rem; line-height: 1; }

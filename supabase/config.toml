@@ -1,0 +1,4 @@
+# Minimal Supabase CLI config for this repo.
+# Run `supabase link --project-ref <your-project-ref>` once, then the commands in README.md.
+[functions.sign-session]
+verify_jwt = false

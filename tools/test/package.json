@@ -1,0 +1,13 @@
+{
+  "name": "odc-client-sign-test",
+  "private": true,
+  "description": "Local test harness: npm install, then `node mock-server.mjs ../.. 8765 out` and `python3 e2e_test.py contract|onboarding` (needs: pip install playwright; playwright install chromium)",
+  "dependencies": {
+    "bootstrap": "5.3.2",
+    "html2canvas": "1.4.1",
+    "html2pdf.js": "0.10.1",
+    "jspdf": "2.5.1",
+    "lz-string": "1.5.0",
+    "signature_pad": "4.1.7"
+  }
+}
