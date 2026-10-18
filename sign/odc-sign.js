@@ -8,7 +8,7 @@
                                        lets the participant sign and submit.
    All server work goes through the Supabase Edge Function in
    supabase/functions/sign-session (Microsoft Graph → SharePoint + e-mail).
-   ═══════════════════════════════════════════════════════════════════════ */
+   ════════════════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
 
@@ -165,6 +165,18 @@
   // the values fixed, so coordinators cannot send the wrong agreement.
   if (PAGE === 'contract') {
     try { _autoVersion = function () { return 'v16'; }; } catch (e) {}
+    const forceVariant = function () {
+      try {
+        const sm = document.querySelector('input[name="contractType"][value="selfmanaged"]');
+        const all = document.querySelector('input[name="contractType"][value="sydney"]');
+        if (all) all.checked = false;
+        if (sm && !sm.checked) sm.checked = true;
+        if (typeof getAgreementVersion === 'function' && getAgreementVersion() !== 'v16' && typeof setAgreementVersion === 'function') setAgreementVersion('v16', true);
+        try { if (window.docInputCache) { window.docInputCache.__agreementVersion = 'v16'; window.docInputCache.__agreementVersionManual = true; } } catch (e) {}
+      } catch (e) { console.warn('[odc-sign] forceVariant:', e); }
+    };
+    // The page's own restore code can flip the radios back; re-assert right before every render.
+    try { orig.renderDocs = renderDocs; renderDocs = function () { forceVariant(); return orig.renderDocs.apply(this, arguments); }; } catch (e) { console.warn('[odc-sign] renderDocs wrap:', e); }
     onReady.then(() => {
       try {
         ['contractTypeRow', 'agreementVersionRow'].forEach(id => {
@@ -173,16 +185,15 @@
           if (title && title.classList.contains('form-section-title')) title.style.display = 'none';
           row.style.display = 'none';
         });
-        const sm = document.querySelector('input[name="contractType"][value="selfmanaged"]');
-        if (sm && !sm.checked) { sm.checked = true; if (typeof onContractChange === 'function') onContractChange(); }
-        if (typeof setAgreementVersion === 'function') setAgreementVersion('v16', true);
-      } catch (e) { console.warn('[odc-sign] fixed variant:', e); }
+      } catch (e) { console.warn('[odc-sign] hide variant rows:', e); }
+      forceVariant();
+      [800, 1600, 3000].forEach(ms => setTimeout(forceVariant, ms));
     });
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════════════
   // CLIENT MODE
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═════════════════════════════════════════════════════════════════════════
   if (MODE === 'client') {
     let session = null;
 
@@ -369,9 +380,9 @@
     return;
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═════════════════════════════════════════════════════════════════════════
   // COORDINATOR MODE — the normal app plus "Create client link"
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═════════════════════════════════════════════════════════════════════════
   onReady.then(() => {
     const b = document.createElement('div');
     b.className = 'odcs-banner no-print';
