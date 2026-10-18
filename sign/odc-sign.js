@@ -8,7 +8,7 @@
                                        lets the participant sign and submit.
    All server work goes through the Supabase Edge Function in
    supabase/functions/sign-session (Microsoft Graph → SharePoint + e-mail).
-   ════════════════════════════════════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
 
@@ -17,7 +17,9 @@
   const FN   = CFG.functionUrl || '';
   const q    = new URLSearchParams(location.search);
   const SID  = ((location.hash.match(/^#sid=([0-9a-f-]{36})/i) || [])[1] || q.get('sid') || '').toLowerCase();
-  const MODE = SID ? 'client' : 'coordinator';
+  // self-service: one fixed link (…/contract/?self) — the participant fills in their own details, signs and submits
+  const SELF = !SID && (q.has('self') || /^#self$/i.test(location.hash));
+  const MODE = SID ? 'client' : SELF ? 'self' : 'coordinator';
   const LS_COORD = 'odcs_coord_v1';                   // remembered coordinator e-mail + PIN
 
   document.documentElement.classList.add('odc-sign-' + MODE);
@@ -191,23 +193,29 @@
     });
   }
 
-  // ════════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════
   // CLIENT MODE
-  // ═════════════════════════════════════════════════════════════════════════
-  if (MODE === 'client') {
+  // ═══════════════════════════════════════════════════════════════════════
+  if (MODE === 'client' || MODE === 'self') {
     let session = null;
 
-    // 1. Nothing from a previous visitor on this device may leak into the view
-    try { if (typeof window.clearLocalSave === 'function') window.clearLocalSave(); else if (typeof clearLocalSave === 'function') clearLocalSave(); } catch (e) { console.warn('[odc-sign] clearLocalSave:', e); }
-    try { Object.keys(localStorage).forEach(k => { if (/^odc_(shared_|sig_|all_forms|contracts|sa_)/.test(k)) localStorage.removeItem(k); }); } catch (e) {}
-
-    // 2. Stop the host page restoring its own (now empty / stale) saves
-    try { if (typeof loadSavedData === 'function') window.removeEventListener('DOMContentLoaded', loadSavedData); } catch (e) {}
     let gate = true;                                   // block host restores until the session is in
-    try { orig.restoreAllValues = _restoreAllValues; _restoreAllValues = function () { if (!gate) return orig.restoreAllValues.apply(this, arguments); }; } catch (e) {}
-    try { orig.restoreSignatures = _restoreSignatures; _restoreSignatures = function () { if (!gate) return orig.restoreSignatures.apply(this, arguments); }; } catch (e) {}
+    if (MODE === 'client') {
+      // 1. Nothing from a previous visitor on this device may leak into the view
+      try { if (typeof window.clearLocalSave === 'function') window.clearLocalSave(); else if (typeof clearLocalSave === 'function') clearLocalSave(); } catch (e) { console.warn('[odc-sign] clearLocalSave:', e); }
+      try { Object.keys(localStorage).forEach(k => { if (/^odc_(shared_|sig_|all_forms|contracts|sa_)/.test(k)) localStorage.removeItem(k); }); } catch (e) {}
+
+      // 2. Stop the host page restoring its own (now empty / stale) saves
+      try { if (typeof loadSavedData === 'function') window.removeEventListener('DOMContentLoaded', loadSavedData); } catch (e) {}
+      try { orig.restoreAllValues = _restoreAllValues; _restoreAllValues = function () { if (!gate) return orig.restoreAllValues.apply(this, arguments); }; } catch (e) {}
+      try { orig.restoreSignatures = _restoreSignatures; _restoreSignatures = function () { if (!gate) return orig.restoreSignatures.apply(this, arguments); }; } catch (e) {}
+      try { autoSaveDebounced = function () {}; } catch (e) {}
+    } else {
+      // self-service: the page's own autosave stays on, so a participant can come back to a half-filled form on the same device
+      gate = false;
+      try { orig.restoreAllValues = _restoreAllValues; orig.restoreSignatures = _restoreSignatures; } catch (e) {}
+    }
     try { orig.showRestoreToast = _showRestoreToast; _showRestoreToast = function () {}; } catch (e) {}
-    try { autoSaveDebounced = function () {}; } catch (e) {}
 
     // 3. Participants may not sign or remove staff fields
     if (PAGE === 'contract') {
@@ -240,6 +248,9 @@
     }
 
     // 4. Load the session, then restore and adjust the UI
+    if (MODE === 'self') {
+      onLoad.then(async () => { await wait(300); installClientUi({ self: true }); });
+    } else {
     onReady.then(() => {
       ov.show('Loading your documents…', 'Please wait a moment.');
       document.body.classList.add('odcs-loading');
@@ -264,32 +275,57 @@
       ov.hide();
       showBlocked('We could not open this link.', esc(e.message || e) + '<br><br>Please check the link is complete, or contact One Dream Community on ' + esc(CFG.officePhone || '') + '.');
     });
+    }
 
     function installClientUi(data) {
+      const self = !!data.self;
       const name = esc(data.participant && data.participant.name || adapter.participantName());
       // Banner
       const b = document.createElement('div');
       b.className = 'odcs-banner client no-print';
-      b.innerHTML = '<div><strong>Hello' + (name ? ' ' + name : '') + ',</strong> please review your ' + adapter.docLabel + ' below and sign where marked. '
-        + 'The information has been prepared by your One Dream Community coordinator — if anything is incorrect, please contact us before signing.</div>'
-        + (PAGE === 'contract'
-          ? '<div class="odcs-steps"><span>1 · Draw your signature</span><span>2 · Review &amp; place it</span><span>3 · Submit</span></div>'
-          : '<div class="odcs-steps"><span>1 · Open each form tab</span><span>2 · Click the signature boxes</span><span>3 · Submit</span></div>');
+      b.innerHTML = (self
+        ? '<div><strong>Welcome.</strong> Please fill in your details' + (PAGE === 'contract' ? ', draw your signature, place it on the ' + adapter.docLabel : ' on each form, sign where marked') + ', and press <strong>Submit</strong>. '
+          + 'A signed copy will be e-mailed to you and to One Dream Community. Your progress is saved on this device until you submit.</div>'
+          + (PAGE === 'contract'
+            ? '<div class="odcs-steps"><span>1 · Your details</span><span>2 · Draw your signature</span><span>3 · Review &amp; place it</span><span>4 · Submit</span></div>'
+            : '<div class="odcs-steps"><span>1 · Fill in each form tab</span><span>2 · Click the signature boxes</span><span>3 · Submit</span></div>')
+        : '<div><strong>Hello' + (name ? ' ' + name : '') + ',</strong> please review your ' + adapter.docLabel + ' below and sign where marked. '
+          + 'The information has been prepared by your One Dream Community coordinator — if anything is incorrect, please contact us before signing.</div>'
+          + (PAGE === 'contract'
+            ? '<div class="odcs-steps"><span>1 · Draw your signature</span><span>2 · Review &amp; place it</span><span>3 · Submit</span></div>'
+            : '<div class="odcs-steps"><span>1 · Open each form tab</span><span>2 · Click the signature boxes</span><span>3 · Submit</span></div>'));
       const anchor = document.querySelector('.app-header, .topbar');
       if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(b, anchor.nextSibling); else document.body.prepend(b);
 
+      if (self && PAGE === 'contract') {
+        // Participant-facing wording for the details step; staff-only fields hidden
+        const intro = document.querySelector('#panel1 .alert');
+        if (intro) intro.innerHTML = '<span style="flex:1;min-width:280px;"><strong>✏️ Your details.</strong> Fields marked <span class="required-star">*</span> are required. They are placed automatically into the Service Agreement on the last step.</span>';
+        ['f_officer', 'f_docDate'].forEach(id => { const el = $(id); const col = el && el.closest('[class*="col-"]'); if (col) col.style.display = 'none'; });
+        const today = new Date(); const pad = n => String(n).padStart(2, '0');
+        if ($('f_docDate') && !$('f_docDate').value) $('f_docDate').value = today.getFullYear() + '-' + pad(today.getMonth() + 1) + '-' + pad(today.getDate());
+        const emailLabel = $('f_email') && $('f_email').closest('[class*="col-"]') && $('f_email').closest('[class*="col-"]').querySelector('.form-label');
+        if (emailLabel && !/\*/.test(emailLabel.textContent)) emailLabel.innerHTML += ' <span class="required-star">*</span>';
+      }
+
       if (PAGE === 'contract') {
-        // Steps: 1 signature → 2 documents
-        const t2 = $('tab2'), t3 = $('tab3');
-        if (t2) t2.innerHTML = '<span class="step-badge">1</span> Your Signature';
-        if (t3) t3.innerHTML = '<span class="step-badge">2</span> Review &amp; Sign Documents';
+        // Steps: 1 signature → 2 documents  (self-service keeps the details step as step 1)
+        const t1 = $('tab1'), t2 = $('tab2'), t3 = $('tab3');
+        if (self) {
+          if (t1) t1.innerHTML = '<span class="step-badge">1</span> Your Details';
+          if (t2) t2.innerHTML = '<span class="step-badge">2</span> Your Signature';
+          if (t3) t3.innerHTML = '<span class="step-badge">3</span> Review &amp; Sign';
+        } else {
+          if (t2) t2.innerHTML = '<span class="step-badge">1</span> Your Signature';
+          if (t3) t3.innerHTML = '<span class="step-badge">2</span> Review &amp; Sign Documents';
+        }
         // staff pad is not for the participant
         const staffCol = $('sigCanvasStaff') && $('sigCanvasStaff').closest('.col-md-4'); if (staffCol) staffCol.style.display = 'none';
         const repCol = $('sigCanvasRep') && $('sigCanvasRep').closest('.col-md-4');
         const repTitle = repCol && repCol.querySelector(':scope > div > div:first-child'); if (repTitle) repTitle.textContent = '🧑‍🤝‍🧑 Representative / Attorney (only if signing on the participant\'s behalf)';
         const alert2 = document.querySelector('#panel2 .alert');
         if (alert2) alert2.innerHTML = '<strong>✍️ Draw your signature</strong> with your finger, stylus or mouse, then click <strong>✓ Accept</strong>. On the next step you can place it on every signature line in one click.';
-        document.querySelectorAll('#panel2 button').forEach(btn => { if (/goTo\(1\)/.test(btn.getAttribute('onclick') || '')) btn.style.display = 'none'; });
+        if (!self) document.querySelectorAll('#panel2 button').forEach(btn => { if (/goTo\(1\)/.test(btn.getAttribute('onclick') || '')) btn.style.display = 'none'; });
         const alert1 = document.querySelector('#panel3 .apply-all-bar');
         if (alert1) {
           const grp = alert1.querySelector('.d-flex.gap-2');
@@ -299,10 +335,23 @@
             const sb = document.createElement('button'); sb.className = 'odcs-btn blue'; sb.id = 'odcsSubmitBar'; sb.textContent = '📤 Submit signed agreement'; sb.onclick = submit; grp.appendChild(sb);
           }
         }
-        goTo(2);
+        goTo(self ? 1 : 2);
       } else {
         // first picked form open, submit button in the nav bar
-        try { const ids = adapter.pickedIds(); if (ids.length) showForm(ids[0]); } catch (e) {}
+        if (!self) { try { const ids = adapter.pickedIds(); if (ids.length) showForm(ids[0]); } catch (e) {} }
+        else {
+          // self-service default: the full self-managed onboarding set (participant can still untick in "Pick Forms")
+          try {
+            if (!localStorage.getItem('odc_all_forms_picks_v1')) {
+              _picks = new Set(['client', 'intake', 'consent', 'emergency', 'eligibility']);
+              if (typeof setPicks === 'function') setPicks(_picks);
+              if (typeof applyPicksToTabs === 'function') applyPicksToTabs();
+              if (typeof buildFormPicker === 'function') buildFormPicker();
+            }
+            const fp = $('formPicker'); if (fp) fp.style.display = 'none';
+            showForm('client');
+          } catch (e) { console.warn('[odc-sign] self picks:', e); }
+        }
         const nav = $('navBar');
         if (nav) { const sb = document.createElement('button'); sb.className = 'odcs-btn blue'; sb.id = 'odcsSubmitBar'; sb.textContent = '📤 Submit signed forms'; sb.onclick = submit; nav.appendChild(sb); }
         try { const modalApply = document.querySelector('#sigModalBackdrop button[onclick*="applySigToAll"]'); if (modalApply) modalApply.textContent = '✍️ Apply to all my fields'; } catch (e) {}
@@ -317,12 +366,22 @@
     let submitting = false;
     async function submit() {
       if (submitting) return;
+      let selfName = '', selfEmail = '';
+      if (MODE === 'self') {
+        selfName = (adapter.participantName() || '').trim(); selfEmail = (adapter.participantEmail() || '').trim();
+        const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(selfEmail);
+        if (!selfName || !emailOk) {
+          toast('⚠ <strong>Please enter your full name and a valid e-mail address</strong>' + (PAGE === 'contract' ? ' on the “Your Details” step' : ' on the Client Info form') + ' — the signed copy is sent there.', 'error');
+          if (PAGE === 'contract') { try { goTo(1); } catch (e) {} } else { try { showForm('client'); } catch (e) {} }
+          return;
+        }
+      }
       if (!adapter.hasParticipantSignature()) {
-        toast('⚠ <strong>No signature placed yet.</strong> ' + (PAGE === 'contract' ? 'Go to step 1 to draw your signature, then place it on the documents.' : 'Click the signature boxes on each form to sign.'), 'error');
+        toast('⚠ <strong>No signature placed yet.</strong> ' + (PAGE === 'contract' ? 'Go to the signature step to draw your signature, then place it on the documents.' : 'Click the signature boxes on each form to sign.'), 'error');
         if (PAGE === 'contract') { try { if (!clientSigUrl && !repSigUrl) goTo(2); else goTo(3); } catch (e) {} }
         return;
       }
-      const email = session && session.participant && session.participant.email;
+      const email = MODE === 'self' ? selfEmail : (session && session.participant && session.participant.email);
       const msg = 'Submit your signed ' + adapter.docLabel + ' to One Dream Community?\n\n'
         + (email ? 'A copy will be e-mailed to ' + email + ' and to One Dream Community.' : 'A copy will be e-mailed to One Dream Community.')
         + '\n\nThis cannot be undone.';
@@ -334,14 +393,21 @@
         const files = await adapter.buildPdfs((done, total) => ov.set(null, 'Document ' + done + ' of ' + total + ' ready', done / total));
         ov.set('Sending to One Dream Community…', 'Uploading ' + files.length + ' file' + (files.length === 1 ? '' : 's') + '…', 0.95);
         const fd = new FormData();
-        fd.append('action', 'submit');
-        fd.append('id', SID);
+        if (MODE === 'self') {
+          fd.append('action', 'submit-self');
+          fd.append('participantName', selfName);
+          fd.append('participantEmail', selfEmail);
+        } else {
+          fd.append('action', 'submit');
+          fd.append('id', SID);
+        }
         fd.append('page', PAGE);
         try { fd.append('snapshot', JSON.stringify(adapter.collect())); } catch (e) {}
         fd.append('tz', Intl.DateTimeFormat().resolvedOptions().timeZone || '');
         files.forEach((f, i) => fd.append('file' + i, f.blob, f.filename));
         const res = await api(fd);
         ov.hide();
+        if (MODE === 'self') { try { if (typeof clearLocalSave === 'function') clearLocalSave(); } catch (e) {} }   // this device is done with the form
         showDone({ emailedTo: res.emailedTo || [], files: files, signedAt: res.signedAt });
       } catch (e) {
         console.error('[odc-sign] submit failed:', e);
@@ -380,9 +446,9 @@
     return;
   }
 
-  // ═════════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════
   // COORDINATOR MODE — the normal app plus "Create client link"
-  // ═════════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════
   onReady.then(() => {
     const b = document.createElement('div');
     b.className = 'odcs-banner no-print';
