@@ -160,6 +160,26 @@
   // Originals we wrap (function declarations in the host page are global bindings)
   const orig = {};
 
+  // ── Contract page: this site is Self-managed · V1.6 only ───────────────
+  // The "All States / Self-Managed" and "V1.5 / V1.6" choosers are removed and
+  // the values fixed, so coordinators cannot send the wrong agreement.
+  if (PAGE === 'contract') {
+    try { _autoVersion = function () { return 'v16'; }; } catch (e) {}
+    onReady.then(() => {
+      try {
+        ['contractTypeRow', 'agreementVersionRow'].forEach(id => {
+          const row = $(id); if (!row) return;
+          const title = row.previousElementSibling;
+          if (title && title.classList.contains('form-section-title')) title.style.display = 'none';
+          row.style.display = 'none';
+        });
+        const sm = document.querySelector('input[name="contractType"][value="selfmanaged"]');
+        if (sm && !sm.checked) { sm.checked = true; if (typeof onContractChange === 'function') onContractChange(); }
+        if (typeof setAgreementVersion === 'function') setAgreementVersion('v16', true);
+      } catch (e) { console.warn('[odc-sign] fixed variant:', e); }
+    });
+  }
+
   // ═══════════════════════════════════════════════════════════════════════
   // CLIENT MODE
   // ═══════════════════════════════════════════════════════════════════════
