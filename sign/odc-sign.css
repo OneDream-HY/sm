@@ -64,6 +64,12 @@
 .odc-sign-client #navBar > div:last-child,
 .odc-sign-client .odcs-coord-only { display: none !important; }
 
+/* ── Self-service mode: the participant fills in the details themselves ─── */
+.odc-sign-self #lovToggleWrap,
+.odc-sign-self #navBar > div:last-child > .nav-btn:not(:first-child),
+.odc-sign-self .odcs-coord-only { display: none !important; }
+.odc-sign-self #panel1 button[onclick*="clearAllAndReload"] { display: none !important; }
+
 /* documents: read-only (signature slots and date fields stay interactive) */
 .odc-sign-client #docsContainer input:not([type=date]),
 .odc-sign-client #docsContainer select,
@@ -74,11 +80,13 @@
   pointer-events: none; background-color: #fafaf7 !important;
 }
 .odc-sign-client #docsContainer .ff-inline { border-color: transparent; }
-/* staff slots cannot be touched by the participant */
-.odc-sign-client .sig-slot[data-sigtype="staff"] { pointer-events: none; opacity: .85; }
-.odc-sign-client [data-sigid="sig_1"], .odc-sign-client [data-sigid="sig_2"], .odc-sign-client [data-sigid="sig_10"] { pointer-events: none; }
-.odc-sign-client [data-sigid="sig_1"] .sig-clear-x, .odc-sign-client [data-sigid="sig_2"] .sig-clear-x, .odc-sign-client [data-sigid="sig_10"] .sig-clear-x { display: none !important; }
-.odc-sign-client .sig-slot[data-sigtype="staff"] .sig-slot-hint::after { content: ' (ODC staff)'; font-size: .7em; }
+/* staff slots cannot be touched by the participant (both participant modes) */
+.odc-sign-client .sig-slot[data-sigtype="staff"], .odc-sign-self .sig-slot[data-sigtype="staff"] { pointer-events: none; opacity: .85; }
+.odc-sign-client [data-sigid="sig_1"], .odc-sign-client [data-sigid="sig_2"], .odc-sign-client [data-sigid="sig_10"],
+.odc-sign-self [data-sigid="sig_1"], .odc-sign-self [data-sigid="sig_2"], .odc-sign-self [data-sigid="sig_10"] { pointer-events: none; }
+.odc-sign-client [data-sigid="sig_1"] .sig-clear-x, .odc-sign-client [data-sigid="sig_2"] .sig-clear-x, .odc-sign-client [data-sigid="sig_10"] .sig-clear-x,
+.odc-sign-self [data-sigid="sig_1"] .sig-clear-x, .odc-sign-self [data-sigid="sig_2"] .sig-clear-x, .odc-sign-self [data-sigid="sig_10"] .sig-clear-x { display: none !important; }
+.odc-sign-client .sig-slot[data-sigtype="staff"] .sig-slot-hint::after, .odc-sign-self .sig-slot[data-sigtype="staff"] .sig-slot-hint::after { content: ' (ODC staff)'; font-size: .7em; }
 
 /* ── Done screen ─────────────────────────────────────────────────────── */
 #odcsDone { position: fixed; inset: 0; z-index: 99995; background: linear-gradient(135deg,#eaf2e6 0%,#f0f4ee 100%); display: flex; align-items: flex-start; justify-content: center; padding: 30px 18px; overflow-y: auto; font-family: 'Segoe UI', Arial, sans-serif; }
