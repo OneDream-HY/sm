@@ -4,7 +4,7 @@ Lets **self-managed participants and partners sign the Service Agreement and the
 onboarding forms from a link — no Microsoft 365 account, no login.**
 When they submit, the signed PDF is:
 
-1. filed in SharePoint (`AgedCareTeam622 › Service Agreement Records › Client Signed › <Participant>`),
+1. filed in SharePoint in the client's own folder (`ODC Home Care  Clients › <client> › 01_Onboarding…`, matched by name the same way the coordinator apps do); if no single folder matches, it goes to `Service Agreement Records › Client Signed › <Participant>` and the e-mail says so,
 2. e-mailed from `agedcare@onedreamcommunity.com.au` to the participant, the team mailbox and the coordinator,
 3. logged (who / when / IP / file hash) in a Supabase table.
 
@@ -85,7 +85,8 @@ supabase secrets set \
   ALLOWED_ORIGINS=https://onedream-hy.github.io
   # optional overrides (defaults shown):
   # SP_HOST=onedreamcommunity.sharepoint.com SP_SITE_PATH=/sites/AgedCareTeam622
-  # SP_FOLDER="Service Agreement Records/Client Signed"
+  # SP_FOLDER="Service Agreement Records/Client Signed"   (fallback)
+  # CLIENT_LIBRARY="ODC Home Care  Clients"   (client folders; note the double space)
   # MAIL_FROM=agedcare@onedreamcommunity.com.au MAIL_TEAM=agedcare@onedreamcommunity.com.au
   # COORDINATOR_DOMAIN=onedreamcommunity.com.au LINK_DAYS=30 MAX_FILE_MB=25 OFFICE_PHONE="02 9161 7567"
 
@@ -111,7 +112,20 @@ curl -s -X POST https://<ref>.supabase.co/functions/v1/sign-session -H 'content-
 The pages are public but hold **no client data** — a participant's documents only exist
 behind their own `#sid=` link.
 
-## 5. Day-to-day use (coordinators)
+## 5. Day-to-day use
+
+### Option A — one fixed link, the participant does everything (simplest)
+Send the participant this link (no PIN, no preparation):
+
+* Service Agreement: `https://onedream-hy.github.io/sm/contract/?self`
+* Onboarding forms:  `https://onedream-hy.github.io/sm/onboarding/?self`
+
+They fill in their details, draw and place their signature, and press **Submit**. The signed PDF is
+e-mailed to them and to `agedcare@`, and filed in their SharePoint folder (matched by the name they
+typed; otherwise *Client Signed* with a note in the e-mail). Staff signature lines stay blank for ODC
+to countersign. Progress is kept on their device until they submit.
+
+### Option B — coordinator prepares the documents first (coordinators)
 
 1. Open `contract/` or `onboarding/`. It is the same form you know, minus the SharePoint buttons.
 2. Enter the participant's details, choose the variant / tick the forms, and — if a staff
