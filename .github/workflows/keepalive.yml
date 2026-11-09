@@ -1,0 +1,42 @@
+# Keeps the Supabase free-plan project (ebkgikewgcsrexofktau) from being paused.
+# Supabase pauses free projects after ~7 days without API activity; this pings the
+# sign-session Edge Function (which runs a DB query) every 3 days, and commits a
+# timestamp to the `keepalive` branch so GitHub never disables the schedule for
+# repository inactivity (public repos: 60 days without activity).
+name: Supabase keep-alive
+
+on:
+  schedule:
+    - cron: '17 21 */3 * *'   # every 3 days, 21:17 UTC (08:17 Sydney)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping sign-session
+        run: |
+          code=$(curl -sS -o /tmp/body -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' -H 'Origin: https://onedream-hy.github.io' \
+            --data '{"action":"get","id":"00000000-0000-4000-8000-000000000000"}' \
+            https://ebkgikewgcsrexofktau.supabase.co/functions/v1/sign-session)
+          echo "HTTP $code: $(cat /tmp/body)"
+          # 404 "This link is not valid." = function + database answered → project is awake
+          case "$code" in 200|404) exit 0 ;; *) echo '::error::Supabase did not answer — project may be paused. Restore it in the Supabase dashboard.'; exit 1 ;; esac
+
+      - name: Record the ping (keeps the repo active so the schedule is never disabled)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global user.name 'odc-keepalive'
+          git config --global user.email 'actions@users.noreply.github.com'
+          git clone --quiet --depth 1 --branch keepalive "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ka 2>/dev/null \
+            || { mkdir ka && cd ka && git init -q && git checkout -q -b keepalive && git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" && cd ..; }
+          cd ka
+          date -u +'%Y-%m-%dT%H:%M:%SZ' > last-ping.txt
+          git add last-ping.txt
+          git commit -q -m "keep-alive ping $(cat last-ping.txt)" || exit 0
+          git push -q origin keepalive
