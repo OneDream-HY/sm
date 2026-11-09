@@ -91,7 +91,10 @@
     collect() {
       const full = window._collectFull();
       let ff = {}; try { ff = (typeof ffCache !== 'undefined') ? ffCache : {}; } catch (e) {}
-      return { v: full.v, sig: full.sig, doc: full.doc || {}, ff: ff };
+      // Named participant / agreement details (same as the coordinator app's record) so the
+      // Edge Function can write ODC-Agreement_<Client>.json for the CarePlan app.
+      let extras = {}; try { extras = (typeof window.odcRecordExtras === 'function') ? (window.odcRecordExtras() || {}) : {}; } catch (e) {}
+      return { v: full.v, sig: full.sig, doc: full.doc || {}, ff: ff, extras: extras };
     },
     async restore(p) {
       try { if (p.ff && typeof ffCache !== 'undefined') ffCache = Object.assign({}, p.ff); } catch (e) {}
