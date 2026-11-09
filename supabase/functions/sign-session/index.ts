@@ -1,13 +1,13 @@
 // ═══════════════════════════════════════════════════════════════════════
-// One Dream Community · client e-sign — Supabase Edge Function
+// One Dream Community   client e-sign — Supabase Edge Function
 //
 // Actions (all POST):
 //   {action:"create", pin, page, coordinatorEmail, participantName, participantEmail, payload}
-//        → {ok, id, expiresAt}                 (coordinator, PIN-protected)
+//        	 {ok, id, expiresAt}                 (coordinator, PIN-protected)
 //   {action:"get", id}
-//        → {ok, page, status, participant:{name,email}, payload}   (participant's browser)
+//        	 {ok, page, status, participant:{name,email}, payload}   (participant's browser)
 //   multipart/form-data  action=submit id=… page=… snapshot=… tz=… file0..fileN
-//        → {ok, signedAt, emailedTo, files}    (participant's browser)
+//        	 {ok, signedAt, emailedTo, files}    (participant's browser)
 //
 // On submit the signed PDFs are uploaded to SharePoint and e-mailed from the
 // team mailbox, both through Microsoft Graph with application permissions
@@ -29,7 +29,11 @@ const CFG = {
   clientSecret: env("MS_CLIENT_SECRET"),
   spHost: env("SP_HOST", "onedreamcommunity.sharepoint.com"),
   spSitePath: env("SP_SITE_PATH", "/sites/AgedCareTeam622"),
-  spFolder: env("SP_FOLDER", "Service Agreement Records/Client Signed"),
+  spFolder: env("SP_FOLDER", "Service Agreement Records/Client Signed"), // fallback when no client folder matches
+  // Library with one folder per client (same as the coordinator apps' "Save PDF to Client Folder")
+  clientLibrary: env("CLIENT_LIBRARY", "ODC Home Care  Clients"),
+  clientDriveHint: env("CLIENT_DRIVE_ID_HINT", "b!I0bis5wgzk-JzgADzP8AlM-JoBNOh31Ov6V81jmvQvPTCssh40DySJzey3au5DT7"),
+  clientSubfolders: [/^0?1[\s_.-]*onboarding/i, /^sah$/i, /[_\s]sah$/i],
   mailFrom: env("MAIL_FROM", "agedcare@onedreamcommunity.com.au"),
   mailTeam: env("MAIL_TEAM", "agedcare@onedreamcommunity.com.au").split(",").map((s) => s.trim()).filter(Boolean),
   pin: env("COORDINATOR_PIN"),
@@ -149,18 +153,93 @@ async function putChunks(uploadUrl: string, bytes: Uint8Array): Promise<any> {
   }
   return last;
 }
-async function uploadToSharePoint(folder: string, name: string, bytes: Uint8Array) {
-  const drive = await driveId();
-  await ensureFolder(drive, folder);
-  const session = await graph(`/drives/${drive}/root:/${encPath(folder + "/" + name)}:/createUploadSession`, {
+// Upload into a folder given either by path under the team drive, or by (driveId, folderItemId).
+type Dest = { driveId: string; folderId: string; label: string; webUrl: string | null; matched: boolean };
+async function uploadToDest(dest: Dest, name: string, bytes: Uint8Array) {
+  const session = await graph(`/drives/${dest.driveId}/items/${dest.folderId}:/${encodeURIComponent(name)}:/createUploadSession`, {
     method: "POST",
     body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": "rename", name } }),
   });
   const item = await putChunks(session.uploadUrl, bytes);
   return { id: item?.id ?? null, name: item?.name ?? name, webUrl: item?.webUrl ?? null };
 }
+async function fallbackDest(participant: string): Promise<Dest> {
+  const drive = await driveId();
+  const folder = `${CFG.spFolder}/${safeName(participant)}`;
+  await ensureFolder(drive, folder);
+  const item = await graph(`/drives/${drive}/root:/${encPath(folder)}`);
+  return { driveId: drive, folderId: item.id, label: folder, webUrl: item.webUrl ?? null, matched: false };
+}
 
-// Draft → attachments (small inline, large via upload session) → send.
+// ── Client folder lookup (mirrors the coordinator apps' "Save PDF to Client Folder") ──
+const norm = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9À-￿]+/g, " ").replace(/\s+/g, " ").trim();
+const compact = (s: string) => norm(s).replace(/\s+/g, "");
+function score(folderName: string, query: string): number {
+  const q = norm(query), n = norm(folderName);
+  if (!q) return 0;
+  const toks = q.split(" ").filter(Boolean);
+  const hit = toks.filter((t) => n.indexOf(t) !== -1).length;
+  if (hit === toks.length) return 2;
+  if (compact(folderName).indexOf(compact(query)) !== -1) return 2;
+  return hit ? 1 : 0;
+}
+let clientDriveCache: string | null = null;
+async function clientDriveId(): Promise<string> {
+  if (clientDriveCache) return clientDriveCache;
+  const tidy = (s: string) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
+  const want = tidy(CFG.clientLibrary);
+  try {
+    const site = await graph(`/sites/${CFG.spHost}:${CFG.spSitePath}`);
+    const data = await graph(`/sites/${site.id}/drives?$select=id,name,webUrl&$top=200`);
+    const hit = (data.value ?? []).find((d: any) => {
+      let tail = ""; try { tail = decodeURIComponent(String(d.webUrl ?? "").split("/").pop() ?? ""); } catch { /* ignore */ }
+      return tidy(d.name) === want || tidy(tail) === want;
+    });
+    if (hit) { clientDriveCache = hit.id; return hit.id; }
+  } catch (e) { console.warn("[sign-session] client library lookup failed:", (e as Error).message); }
+  clientDriveCache = CFG.clientDriveHint;
+  return CFG.clientDriveHint;
+}
+async function listFolders(drive: string, itemId: string | null): Promise<any[]> {
+  const out: any[] = [];
+  let url: string | null = itemId
+    ? `/drives/${drive}/items/${itemId}/children?$select=id,name,folder,webUrl&$top=500`
+    : `/drives/${drive}/root/children?$select=id,name,folder,webUrl&$top=500`;
+  while (url) {
+    const data = await graph(url);
+    for (const v of data.value ?? []) if (v.folder) out.push(v);
+    url = data["@odata.nextLink"] ?? null;
+  }
+  return out;
+}
+async function findClientDest(participant: string): Promise<Dest | null> {
+  const name = participant.trim();
+  if (!name) return null;
+  const drive = await clientDriveId();
+  // Search first (fast); fall back to listing the library root (search index can lag for new folders)
+  let cands: any[] = [];
+  try {
+    const safe = name.replace(/'/g, "''");
+    const data = await graph(`/drives/${drive}/root/search(q='${encodeURIComponent(safe)}')?$top=100&$select=id,name,folder,parentReference,webUrl`);
+    cands = (data.value ?? []).filter((v: any) => v.folder);
+  } catch (e) { console.warn("[sign-session] folder search failed:", (e as Error).message); }
+  if (!cands.length) cands = await listFolders(drive, null);
+  const scored = cands.map((c) => ({ c, s: score(c.name, name) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s);
+  const best = scored.filter((x) => x.s === 2);
+  // exact-ish match required, and it must be unambiguous (several "Kim" folders 	 don't guess)
+  if (best.length !== 1) { console.log(`[sign-session] client folder for "${name}": ${best.length} strong match(es) of ${scored.length} — using fallback`); return null; }
+  let folder = best[0].c;
+  let label = folder.name;
+  const subs = await listFolders(drive, folder.id);
+  for (const re of CFG.clientSubfolders) {
+    const hit = subs.filter((s) => re.test(s.name));
+    if (hit.length === 1) { folder = hit[0]; label += " › " + hit[0].name; break; }
+    if (hit.length > 1) break;
+  }
+  return { driveId: drive, folderId: folder.id, label: `${CFG.clientLibrary.replace(/\s+/g, " ")} › ${label}`, webUrl: folder.webUrl ?? null, matched: true };
+}
+
+// Draft 	 attachments (small inline, large via upload session) 	 send.
 async function sendMailWithAttachments(opts: { to: string[]; cc: string[]; subject: string; html: string; files: { name: string; bytes: Uint8Array }[] }) {
   const u = `/users/${encodeURIComponent(CFG.mailFrom)}`;
   const msg = await graph(`${u}/messages`, {
@@ -245,8 +324,9 @@ async function handleGet(req: Request, b: any) {
 }
 
 async function handleSubmit(req: Request, form: FormData) {
-  const id = String(form.get("id") ?? "").toLowerCase();
-  if (!isUuid(id)) throw bad(400, "Invalid link.");
+  const selfService = String(form.get("action")) === "submit-self";
+  let id = String(form.get("id") ?? "").toLowerCase();
+  if (!selfService && !isUuid(id)) throw bad(400, "Invalid link.");
   const page = String(form.get("page") ?? "");
   const tz = String(form.get("tz") ?? "");
   let snapshot: unknown = null;
@@ -265,6 +345,27 @@ async function handleSubmit(req: Request, form: FormData) {
   if (!files.length) throw bad(400, "No PDF received.");
 
   const sb = db();
+  if (selfService) {
+    // Self-service: the participant opened the fixed link and typed their own details — create the session now.
+    if (!["contract", "onboarding"].includes(page)) throw bad(400, "Unknown page.");
+    const pName = String(form.get("participantName") ?? "").trim();
+    const pEmail = String(form.get("participantEmail") ?? "").trim().toLowerCase();
+    if (!pName) throw bad(400, "Please enter your full name.");
+    if (!isEmail(pEmail)) throw bad(400, "Please enter a valid e-mail address.");
+    const ip = ipOf(req);
+    if (ip) {
+      const since = new Date(Date.now() - 3600_000).toISOString();
+      const { count } = await sb.from("sign_sessions").select("id", { count: "exact", head: true }).eq("created_ip", ip).gte("created_at", since);
+      if ((count ?? 0) >= CFG.createPerHour) throw bad(429, "Too many submissions from this network in the last hour. Please try again later.");
+    }
+    const { data: created, error: cErr } = await sb.from("sign_sessions").insert({
+      page, coordinator_email: "self-service", participant_name: pName, participant_email: pEmail,
+      payload: {}, status: "opened", opened_at: new Date().toISOString(), opened_ip: ip || null,
+      expires_at: new Date(Date.now() + 86400_000).toISOString(), created_ip: ip || null,
+    }).select("id").single();
+    if (cErr) throw bad(500, "Could not record the submission: " + cErr.message);
+    id = created.id;
+  }
   const { data: s, error } = await sb.from("sign_sessions").select("*").eq("id", id).maybeSingle();
   if (error) throw bad(500, error.message);
   if (!s) throw bad(404, "This link is not valid.");
@@ -282,13 +383,43 @@ async function handleSubmit(req: Request, form: FormData) {
   const whenSydney = now.toLocaleString("en-AU", { timeZone: "Australia/Sydney", dateStyle: "long", timeStyle: "short" });
   const stamp = now.toLocaleDateString("en-CA", { timeZone: "Australia/Sydney" }); // yyyy-mm-dd, Sydney date
   try {
-    // 1. SharePoint
-    const folder = `${CFG.spFolder}/${safeName(s.participant_name)}`;
+    // 1. SharePoint — the client's own folder when it can be matched by name, otherwise the holding folder
+    let dest: Dest | null = null;
+    try { dest = await findClientDest(s.participant_name); } catch (e) { console.warn("[sign-session] client folder lookup failed:", (e as Error).message); }
+    if (!dest) dest = await fallbackDest(s.participant_name);
+    const folder = dest.label;
     const uploaded: { name: string; size: number; sha256: string; webUrl: string | null }[] = [];
     for (const f of files) {
       const name = f.name.replace(/\.pdf$/i, "") + `_signed_${stamp}.pdf`;
-      const item = await uploadToSharePoint(folder, name, f.bytes);
+      const item = await uploadToDest(dest, name, f.bytes);
       uploaded.push({ name: item.name, size: f.bytes.length, sha256: f.sha256, webUrl: item.webUrl });
+    }
+    // 1b. Agreement record for the CarePlan / coordinator apps (same shape as contract-client's
+    //     ODC-Agreement_<Client>.json). The Power Automate flow "New client agreement signed -> RNs"
+    //     posts to the RNs channel from this file. Never fails the submission.
+    if (s.page === "contract") {
+      try {
+        const snap: any = (snapshot && typeof snapshot === "object") ? snapshot : {};
+        const ex: any = (snap.extras && typeof snap.extras === "object") ? snap.extras : {};
+        const participant: any = Object.assign({ name: s.participant_name, email: s.participant_email ?? "" }, ex.participant ?? {});
+        if (!String(participant.name ?? "").trim()) participant.name = s.participant_name;
+        if (!String(participant.email ?? "").trim() && s.participant_email) participant.email = s.participant_email;
+        const agreement: any = Object.assign({ variant: "Self-managed", version: "V1.6" }, ex.agreement ?? {}, { signed: true, signedAt: now.toISOString(), eSign: true, selfService });
+        const record = {
+          app: "ODC Service Agreement", version: 2, source: "sm-esign",
+          savedAt: now.toISOString(),
+          savedBy: selfService ? `self-service e-sign (${s.participant_email ?? ""})` : `${s.coordinator_email} via e-sign link`,
+          values: Array.isArray(snap.v) ? snap.v : [], sig: snap.sig ?? { client: true }, doc: snap.doc ?? {},
+          participant, agreement, shared: ex.shared ?? {},
+          clientFolder: dest.matched ? { id: dest.folderId, name: dest.label, url: dest.webUrl } : null,
+          signedFiles: uploaded, sessionId: id,
+        };
+        const slug = String(s.participant_name ?? "").trim().replace(/[\\/:*?"<>|#%&{}]/g, "").replace(/\s+/g, "-").slice(0, 60) || "Client";
+        const recDrive = await driveId();
+        const recPath = `Service Agreement Records/ODC-Agreement_${slug}.json`;
+        await graph(`/drives/${recDrive}/root:/${encPath(recPath)}:/content`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(record, null, 2) });
+        console.log(`[sign-session] agreement record written: ${recPath}`);
+      } catch (e) { console.warn("[sign-session] agreement record failed:", (e as Error).message); }
     }
     // 2. E-mail
     const to: string[] = [];
@@ -307,7 +438,7 @@ async function handleSubmit(req: Request, form: FormData) {
         <p>If you have any questions, please call us on <strong>${esc(CFG.officePhone)}</strong> or reply to this e-mail.</p>
         <p>Kind regards,<br>${esc(CFG.orgName)}<br>${esc(CFG.mailFrom)}</p>
         <hr style="border:none;border-top:1px solid #ddd;margin:18px 0;">
-        <p style="font-size:12px;color:#777;">For ODC staff: filed in SharePoint under <em>${esc(folder)}</em>${uploaded[0]?.webUrl ? ` — <a href="${esc(uploaded[0].webUrl)}">open</a>` : ""}. Coordinator: ${esc(s.coordinator_email)}.</p>
+        <p style="font-size:12px;color:#777;">For ODC staff: filed in SharePoint under <em>${esc(folder)}</em>${dest.webUrl ? ` — <a href="${esc(dest.webUrl)}">open folder</a>` : ""}. ${isEmail(s.coordinator_email) ? `Coordinator: ${esc(s.coordinator_email)}.` : `<strong>Self-service submission</strong> (no coordinator) — please review the details the participant entered and countersign if required.`}${dest.matched ? "" : ` <strong style="color:#a64b2a;">No client folder matching “${esc(s.participant_name)}” was found in ${esc(CFG.clientLibrary.replace(/\s+/g, " "))} — please move the file to the client's folder.</strong>`}</p>
       </div>`;
     const mail = await sendMailWithAttachments({
       to, cc, subject: `${CFG.orgName} – signed ${docLabel} – ${s.participant_name}`, html,
@@ -332,7 +463,7 @@ Deno.serve(async (req) => {
     const ct = req.headers.get("content-type") ?? "";
     if (ct.includes("multipart/form-data")) {
       const form = await req.formData();
-      if (String(form.get("action")) !== "submit") throw bad(400, "Unknown action.");
+      if (!["submit", "submit-self"].includes(String(form.get("action")))) throw bad(400, "Unknown action.");
       return json(req, await handleSubmit(req, form));
     }
     const b = await req.json().catch(() => ({}));
